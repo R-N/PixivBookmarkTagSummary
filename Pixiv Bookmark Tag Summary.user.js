@@ -373,46 +373,78 @@
         });
 
         let totalCount = 0;
-        const tagContainer = document.createElement('ol');
-        //Object.entries(tags).forEach(([id, tag]) => {
+        const tagContainer = document.createElement('div');
+        tagContainer.style.display = 'grid';
+        tagContainer.style.gridTemplateColumns = 'repeat(auto-fill, minmax(100px, 1fr))';
+        tagContainer.style.gap = '10px';
+    
+        // Keep track of the currently expanded tile
+        let expandedTile = null;
+        // Generate each tag as a tile with clickable illustration list
         Object.values(sortedTags).forEach((tag) => {
             let count = countIllusts(tag);
             if (!count) return;
-            // Create a list item for each tag
-            const tagItem = document.createElement('li');
+    
+            const tagTile = document.createElement('div');
+            tagTile.style.backgroundColor = '#f0f0f0';
+            tagTile.style.padding = '5px';
+            tagTile.style.borderRadius = '5px';
+            tagTile.style.textAlign = 'center';
+            tagTile.style.cursor = 'pointer';
+            tagTile.style.transition = 'all 0.3s ease';
+    
+            const tagText = document.createElement('div');
             const tagLink = document.createElement('a');
             tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${tag.name}?rest=${publicationType}`;
-            tagLink.innerText = tag.name;
-
-            // Create a span for count and add click event to toggle illustrations
-            const countSpan = document.createElement('span');
-            countSpan.innerText = `: ${count}`;
-            countSpan.style.cursor = 'pointer'; // Change cursor to pointer
-            countSpan.style.marginLeft = '5px';
-
-            // Create a container for illustrations and initially hide it
-            const illustContainer = document.createElement('ul');
-            illustContainer.style.display = 'none'; // Initially hidden
-            illustContainer.style.paddingLeft = '20px'; // Indent the illustrations
-
+            tagLink.innerText = `${tag.name}`;
+            tagLink.style.textDecoration = 'none';
+            tagLink.style.color = 'black';
+            tagLink.style.display = 'block';
+            tagText.appendChild(tagLink);
+    
+            const tagCount = document.createElement('div');
+            tagCount.innerText = `(${count})`;
+            tagText.appendChild(tagCount);
+    
+            // Create a container for illustrations (initially hidden)
+            const illustContainer = document.createElement('ol');
+            illustContainer.classList.add("illust-container");
+            illustContainer.style.display = 'none';
+            illustContainer.style.paddingTop = '5px';
+            illustContainer.style.textAlign = 'left';
+    
             // Populate illustrations
             Object.values(tag.illustrations).forEach((illust) => {
                 const illustItem = document.createElement('li');
-                let text = illust.alt || illust.title;
-                illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${text}</a>`;
+                illustItem.style.marginBottom = '5px';
+                illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${illust.alt || illust.title}</a>`;
                 illustContainer.appendChild(illustItem);
             });
-
-            // Append tag link and count span to tag item
-            tagItem.appendChild(tagLink);
-            tagItem.appendChild(countSpan);
-            tagItem.appendChild(illustContainer);
-            tagContainer.appendChild(tagItem);
-
-            // Toggle illustration visibility when count is clicked
-            countSpan.addEventListener('click', () => {
-                illustContainer.style.display = (illustContainer.style.display === 'none') ? 'block' : 'none';
+    
+            // Toggle illustration visibility when tile is clicked
+            tagTile.addEventListener('click', () => {
+                if (expandedTile && expandedTile !== tagTile) {
+                    // Collapse the previously expanded tile
+                    expandedTile.style.gridColumn = '';
+                    expandedTile.querySelector('.illust-container').style.display = 'none';
+                }
+                if (illustContainer.style.display === 'none') {
+                    // Expand this tile
+                    tagTile.style.gridColumn = '1 / -1'; // Full width in grid
+                    illustContainer.style.display = 'block';
+                    expandedTile = tagTile;
+                } else {
+                    // Collapse this tile if already expanded
+                    tagTile.style.gridColumn = '';
+                    illustContainer.style.display = 'none';
+                    expandedTile = null;
+                }
             });
+
+    
+            tagTile.appendChild(tagText);
+            tagTile.appendChild(illustContainer);  // Append hidden illustration container to each tile
+            tagContainer.appendChild(tagTile);
             totalCount += count;
         });
         const totalContainer = document.createElement('p');
