@@ -300,14 +300,12 @@
     async function summarizeAllBookmarks(){
         
         userTags = await fetchUserTags();
-        console.log(userTags);
         userTags.forEach((tag) => {
             saveTag(tag);
         });
 
         const bookmarks = await fetchAllBookmarks(uid);
         console.log(`Fetched ${bookmarks.works.length} bookmarks`);
-        console.log(bookmarks);
         
         let total = 0;
         bookmarks["works"].forEach((work) => {
