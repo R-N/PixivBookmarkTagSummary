@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.1
+// @version      0.3
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
