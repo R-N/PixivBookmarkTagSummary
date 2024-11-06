@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Pixiv Bookmark Artist Summary
+// @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.3
-// @description  Count illustrations per artist in bookmarks
+// @version      0.1
+// @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
 // @license      MIT
@@ -13,10 +13,10 @@
 
     const turboMode = false;
     const bookmarkBatchSize = 100;
-    const followBatchSize = 25; //4 illusts per following
     const BANNER = ".sc-x1dm5r-0";
     let uid, lang, token;
     let pageInfo = {};
+    let userTags = [];
 
     let unsafeWindow_ = unsafeWindow;
     
@@ -24,196 +24,134 @@
         return new Promise((res) => setTimeout(res, ms));
     }
     
-    async function unfollow(id){
-        const user_url = `https://www.pixiv.net/${lang}/users/${id}`;
+    async function remove(tags, bookmarkIds){
         const payload = { 
-            mode: "del",
-            type: "bookuser",
-            id: `${id}`,
+            removeTags: tags,
+            bookmarkIds: bookmarkIds,
         };
-        const response = await fetch("https://www.pixiv.net/rpc_group_setting.php", {
+        const response = await fetch("https://www.pixiv.net/ajax/illusts/bookmarks/remove_tags", {
             headers: {
                 accept: "application/json",
-                //"content-type": "application/json; charset=utf-8",
-                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+                "content-type": "application/json; charset=utf-8",
+                //"content-type": "application/x-www-form-urlencoded; charset=utf-8",
                 "x-csrf-token": token,
-                "referer": user_url,
             },
-            //body: JSON.stringify(payload),
-            body: new URLSearchParams(payload).toString(),
+            body: JSON.stringify(payload),
+            //body: new URLSearchParams(payload).toString(),
             method: "POST",
         });
-        if (response.ok) {
-            console.log(`Unfollowed ${user_url}`);
+        if (response.ok && !response.error) {
+            console.log(`Removed ${tags} from ${bookmarkIds}`);
         }else{
-            console.error(`Unfollow failed for ${user_url} with status: ${response.status}`);
+            console.error(`Remove of ${tags} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
         await delay(500);
     }
-    async function unfollowMany(ids){
-        for (const id of ids) {
-            await unfollow(id);
-        }
-    }
-    async function follow(id, restrict=null){
+    async function add(tags, bookmarkIds){
         if (restrict === null){
             restrict = window.location.href.includes("rest=hide") ? 1 : 0;
         }
-        const user_url = `https://www.pixiv.net/${lang}/users/${id}`;
         const payload = { 
-            mode: "add",
-            type: "user",
-            user_id: `${id}`,
-            tag: "",
-            restrict: restrict,
-            format: "json"
+            tags: tags,
+            bookmarkIds: bookmarkIds,
         };
-        const response = await fetch("https://www.pixiv.net/bookmark_add.php", {
+        const response = await fetch("https://www.pixiv.net/ajax/illusts/bookmarks/add_tags", {
             headers: {
                 accept: "application/json",
-                //"content-type": "application/json; charset=utf-8",
-                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+                "content-type": "application/json; charset=utf-8",
+                //"content-type": "application/x-www-form-urlencoded; charset=utf-8",
                 "x-csrf-token": token,
-                "referer": user_url,
             },
-            //body: JSON.stringify(payload),
-            body: new URLSearchParams(payload).toString(),
+            body: JSON.stringify(payload),
+            //body: new URLSearchParams(payload).toString(),
             method: "POST",
         });
-        if (response.ok) {
-            console.log(`Followed ${user_url} ${restrict ? "privately" : ""}`);
+        if (response.ok && !response.error) {
+            console.log(`Added ${tags} from ${bookmarkIds}`);
         }else{
-            console.error(`Follow failed for ${user_url} with status: ${response.status}`);
+            console.error(`Add of ${tags} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
         await delay(500);
     }
-    async function followMany(ids, restrict=null){
-        for (const id of ids) {
-            await follow(id, restrict=restrict);
+
+    async function removeTags(tags){
+        for (const tag of tags) {
+            const illusts = Object.values(tag.illustrations).map((illust) => illust.bookmarkId);
+            await remove([tag.name], illusts);
         }
     }
 
-    
-    
-    async function fetchFollowings(uid, offset=0, publicationType=null, tagToQuery='') {
-        if (!publicationType){
-            publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
-        }
-        const followingsRaw = await fetch(
-            `/ajax/user/${uid}` +
-            `/following?tag=${tagToQuery}` +
-            `&offset=${offset}&limit=${followBatchSize}&rest=${publicationType}`
+    function sortByParody(array) {
+        const sortFunc = (a, b) => {
+          let reg = /^[a-zA-Z0-9]/;
+          if (reg.test(a) && !reg.test(b)) return -1;
+          else if (!reg.test(a) && reg.test(b)) return 1;
+          else return a.localeCompare(b, "zh");
+        };
+        const withParody = array.filter((key) => key.includes("("));
+        const withoutParody = array.filter((key) => !key.includes("("));
+        withoutParody.sort(sortFunc);
+        withParody.sort(sortFunc);
+        withParody.sort((a, b) => sortFunc(a.split("(")[1], b.split("(")[1]));
+        return withoutParody.concat(withParody);
+    }
+
+    async function fetchUserTags() {
+        const tagsRaw = await fetch(
+        `/ajax/user/${uid}/illusts/bookmark/tags?lang=${lang}`
         );
-        if (!turboMode) await delay(500);
-        const followingsRes = await followingsRaw.json();
-        if (!followingsRaw.ok || followingsRes.error === true) {
-            return alert(
-            `Fail to fetch user followings\n` +
-                decodeURI(followingsRes.message)
-            );
-        }
-        const followings = followingsRes.body;
-        followings.count = followings["users"].length;
-        const users = followings["users"]
-        .map((user) => {
-            if (user.userName === "-----") return null;
-            user.id = user.userId;
-            user.name = user.userName;
-            user.url = `https://www.pixiv.net/${lang}/users/${user.userId}`;
-            return user;
-        })
-        .filter((user) => user);// && user.following && !user.isBlocking); 
-        followings["users"] = users;
-        return followings;
-    }
-
-    async function fetchAllFollowings(uid, publicationType=null){
-        let total, // total followings
-            index = 0; // counter of do-while loop
-        let finalFollowings = null;
-        let allUsers = [];
-        do {
-            const followings = await fetchFollowings(
-                uid,
-                index,
-                publicationType
-            );
-            if (!total) total = followings.total;
-            const users = followings["users"];
-            allUsers = allUsers.concat(users);
-            index += followings.count || followings["users"].length;
-            finalFollowings = updateObject(finalFollowings, followings);
-            console.log(`Fetching followings... ${index}/${total}`)
-            console.log(followings);
-        } while (index < total);
-        finalFollowings["users"] = allUsers;
-        console.log(finalFollowings);
-        return finalFollowings;
-    }
-    
-    // Function to bulk follow or unfollow artists based on minimum bookmark count
-    async function bulkFollow(minBookmarks) {
-        // Filter artists based on the bookmark count
-        const selectedArtists = sortedArtists.filter((artist) => {
-            const bookmarkCount = countIllusts(artist);
-            return bookmarkCount >= minBookmarks;
-        }).map((artist) => artist.id);
-
-        if (selectedArtists.length === 0) {
-            alert('No artist meet the criteria.');
-            return;
-        }
-
-        // Show confirmation dialog
-        const confirmation = confirm(
-            `Are you sure you want to follow ${selectedArtists.length} artists?`
+        const tagsObj = await tagsRaw.json();
+        if (tagsObj.error === true)
+        return alert(
+            `获取tags失败
+        Fail to fetch user tags` +
+            "\n" +
+            decodeURI(tagsObj.message)
         );
-        if (!confirmation) return;
-
-        followMany(selectedArtists);
+        let userTagDict = tagsObj.body;
+        const userTagsSet = new Set();
+        const addTag2Set = (tag) => {
+            try {
+                userTagsSet.add(decodeURI(tag));
+            } catch (err) {
+                userTagsSet.add(tag);
+                if (err.message !== "URI malformed") {
+                    console.log("[Label Pixiv] Error!");
+                    console.log(err.name, err.message);
+                    console.log(err.stack);
+                }
+            }
+        };
+        for (let obj of userTagDict.public) {
+            addTag2Set(obj.tag);
+        }
+        for (let obj of userTagDict["private"]) {
+            addTag2Set(obj.tag);
+        }
+        userTagsSet.delete("未分類");
+        return sortByParody(Array.from(userTagsSet));
     }
     
-    // Function to bulk follow or unfollow artists based on minimum bookmark count
-    async function bulkUnfollow(minBookmarks) {
-        // Filter artists based on the bookmark count
-        let selectedArtists = sortedArtists.filter((artist) => {
-            const bookmarkCount = countIllusts(artist);
+    // Function to bulk remove or remove tags based on minimum bookmark count
+    async function bulkRemove(minBookmarks) {
+        // Filter tags based on the bookmark count
+        const selectedTags = sortedTags.filter((tag) => {
+            const bookmarkCount = countIllusts(tag);
             return bookmarkCount < minBookmarks;
-        }).map((artist) => artist.id);
+        });
 
-        
-        // Show confirmation dialog
-        const fetchMore = confirm(
-            `Do you want to also unfollow artists not in your bookmarks?`
-        );
-        if (fetchMore){
-            let protectedArtists = sortedArtists.filter((artist) => {
-                const bookmarkCount = countIllusts(artist);
-                return bookmarkCount >= minBookmarks;
-            }).map((artist) => artist.id);
-            protectedArtists = new Set(protectedArtists);
-    
-            let followings = await fetchAllFollowings(uid);
-            followings = followings.users.map((artist) => artist.id);
-            selectedArtists = selectedArtists.concat(followings);
-            selectedArtists = Array.from(new Set(selectedArtists));
-            console.log(`Pre filter: ${selectedArtists.length}`);
-            selectedArtists = selectedArtists.filter((artist) => !protectedArtists.has(artist));
-            console.log(`Post filter: ${selectedArtists.length}`);
-        }
-
-        if (selectedArtists.length === 0) {
-            alert('No artist meet the criteria.');
+        if (selectedTags.length === 0) {
+            alert('No tag meet the criteria.');
             return;
         }
 
         // Show confirmation dialog
         const confirmation = confirm(
-            `Are you sure you want to unfollow ${selectedArtists.length} artists?`
+            `Are you sure you want to remove ${selectedTags.length} tags?`
         );
         if (!confirmation) return;
 
-        unfollowMany(selectedArtists);
+        removeTags(selectedTags);
     }
     
     async function fetchTokenPolyfill() {
@@ -258,6 +196,7 @@
             console.log(err);
             await polyfill();
         }
+
     }
     async function fetchBookmarks(uid, tagToQuery='', offset=0, publicationType=null) {
         if (!publicationType){
@@ -319,14 +258,14 @@
         return finalBookmarks;
     }
 
-    // Function to count bookmarks by artist
-    let artists = {};
-    let sortedArtists = [];
+    // Function to count bookmarks by tag
+    let tags = {};
+    let sortedTags = [];
     let debounceTimer = null;
     let fetchedAll = false;
 
     // Function to check if the bookmarks list has changed
-    const countIllusts = (artist) => Object.keys(artist.illustrations).length;
+    const countIllusts = (tag) => Object.keys(tag.illustrations).length;
     const illustComparator = (a, b) => countIllusts(b) - countIllusts(a);
 
     function updateObject(target, source){
@@ -336,121 +275,57 @@
         return target;
     }
 
-    function saveArtist(artist){
-        let artistId = artist.id;
-        if (artists[artistId]) {
-            artists[artistId] = updateObject(artists[artistId], artist);
-            artist = artists[artistId];
-        }else{
-            artist.illustrations = {};
-            artists[artistId] = artist;
+    function saveTag(tag){
+        if (!tags[tag]){
+            userTags.push(tag);
+            tags[tag] = {
+                name: tag,
+                illustrations: {},
+            };
         }
-        return artist;
+        return tags[tag];
     }
-    function saveIllust(artist, illust){
+    function saveIllust(tag, illust){
+        tag = saveTag(tag);
         let illustId = illust.id;
-        if (artist.illustrations[illustId]) {
-            artist.illustrations[illustId] = updateObject(artist.illustrations[illustId], illust);
-            illust = artist.illustrations[illustId];
+        if (tag.illustrations[illustId]) {
+            tag.illustrations[illustId] = updateObject(tag.illustrations[illustId], illust);
+            illust = tag.illustrations[illustId];
         }else{
-            artist.illustrations[illustId] = illust;
+            tag.illustrations[illustId] = illust;
         }
         return illust;
     }
 
-    function summarizeBookmarks() {
-        const items = document.querySelectorAll('ul li[size] a[data-gtm-value]:not([data-gtm-user-id])');
-
-        items.forEach(item => {
-            let artistName = item.innerText;
-            const artistLink = item.href;
-            const artistId = item.getAttribute('data-gtm-value');
-            if (!artistName){
-                const item2 = item.querySelector("div[title]");
-                if (item2){
-                    artistName = item2.getAttribute('title');
-                }
-            }
-            const parent = item.closest("li");
-
-            let illustId = null;
-            let illustLink = '';
-            let illustTitle = '';
-            let illustImg = '';
-            let illustAlt = '';
-
-            if (parent){
-
-                const itemIllust = parent.querySelector("a[data-gtm-value][data-gtm-user-id]");
-
-                if (itemIllust){
-                    illustId = itemIllust.getAttribute('data-gtm-value');
-                    illustLink = itemIllust.href;
-                }
-                const itemTitle = parent.querySelector("a:not([data-gtm-value][data-gtm-user-id])");
-                if (itemTitle){
-                    illustTitle = itemTitle.innerText;
-                }
-                if (itemIllust){
-                    const itemIllustImg = itemIllust.querySelector("img");
-
-                    if (itemIllustImg){
-                        illustAlt = itemIllustImg.alt;
-                        if (!illustTitle){
-                            illustTitle = illustAlt;
-                        }
-                        illustImg = itemIllustImg.src;
-                    }
-                }
-            }
-            if (artistId) {
-                let artist = {
-                    id: artistId,
-                    name: artistName,
-                    url: artistLink,
-                }
-                artist = saveArtist(artist);
-                let illust = {
-                    id: illustId,
-                    title: illustTitle,
-                    alt: illustAlt,
-                    url: illustLink,
-                    img: illustImg,
-                };
-                illust = saveIllust(artist, illust);
-            }
-        });
-        sortedArtists = Object.values(artists).sort(illustComparator);
-
-        requestAnimationFrame(renderSummary);
-        //renderSummary();
-    }
-
     async function summarizeAllBookmarks(){
+        
+        userTags = await fetchUserTags();
+        console.log(userTags);
+        userTags.forEach((tag) => {
+            saveTag(tag);
+        });
+
         const bookmarks = await fetchAllBookmarks(uid);
         console.log(`Fetched ${bookmarks.works.length} bookmarks`);
+        console.log(bookmarks);
         
         let total = 0;
         bookmarks["works"].forEach((work) => {
-            let artist = {
-                id: work.userId,
-                name: work.userName,
-                url: `https://www.pixiv.net/${lang}/users/${work.userId}`,
-            }
-            artist = saveArtist(artist);
             let illust = {
                 id: work.id,
                 title: work.title,
                 alt: work.alt,
-                url: `https://www.pixiv.net/${lang}/artworks/${work.id}`,
                 img: work.url,
             };
             illust = updateObject(illust, work);
-            illust = saveIllust(artist, illust);
+            illust["url"] = `https://www.pixiv.net/${lang}/artworks/${work.id}`;
+            work.associatedTags.forEach((tag) => {
+                saveIllust(tag, illust);
+            });
             total += 1;
         });
-        console.log(`Processed ${total} illusts from ${Object.keys(artists).length} artists`);
-        sortedArtists = Object.values(artists).sort(illustComparator);
+        console.log(`Processed ${total} illusts with ${Object.keys(tags).length} tags`);
+        sortedTags = Object.values(tags).sort(illustComparator);
         fetchedAll = true;
         requestAnimationFrame(renderSummary);
         //renderSummary();
@@ -459,14 +334,15 @@
 
     // Function to render the summary UI
     function renderSummary() {
+        let publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
         // Clear previous summary if exists
-        const existingSummary = document.getElementById('artist-summary');
+        const existingSummary = document.getElementById('tag-summary');
         if (existingSummary) {
             existingSummary.remove();
         }
         // Create a summary element
         const summaryDiv = document.createElement('div');
-        summaryDiv.id = 'artist-summary'; // Set an ID for easy removal
+        summaryDiv.id = 'tag-summary'; // Set an ID for easy removal
         summaryDiv.style.position = 'fixed';
         summaryDiv.style.bottom = '10px';
         summaryDiv.style.right = '10px';
@@ -476,39 +352,39 @@
         summaryDiv.style.zIndex = '9999';
 
         const title = document.createElement('h3');
-        title.innerText = 'Artists';
+        title.innerText = 'Tags';
         title.style.cursor = 'pointer'; // Change cursor to pointer
         title.style.margin = '0'; // Remove default margin
 
-        // Create a container for artist data
+        // Create a container for tag data
         const summaryContent = document.createElement('div');
         summaryContent.style.display = 'none'; // Initially hidden
         summaryContent.style.padding = '10px';
         summaryContent.style.maxHeight = '300px'; // Set a maximum height
         summaryContent.style.overflowY = 'auto'; // Enable vertical scrolling
 
-        // Toggle visibility of the artist container when the title is clicked
+        // Toggle visibility of the tag container when the title is clicked
         title.addEventListener('click', () => {
             if (summaryContent.style.display === 'none') {
                 summaryContent.style.display = 'block';
-                title.innerText = 'Artists'; // Change title when expanded
+                title.innerText = 'Tags'; // Change title when expanded
             } else {
                 summaryContent.style.display = 'none';
-                title.innerText = 'Artists'; // Reset title when collapsed
+                title.innerText = 'Tags'; // Reset title when collapsed
             }
         });
 
         let totalCount = 0;
-        const artistContainer = document.createElement('ol');
-        //Object.entries(artists).forEach(([id, artist]) => {
-        Object.values(sortedArtists).forEach((artist) => {
-            let count = countIllusts(artist);
+        const tagContainer = document.createElement('ol');
+        //Object.entries(tags).forEach(([id, tag]) => {
+        Object.values(sortedTags).forEach((tag) => {
+            let count = countIllusts(tag);
             if (!count) return;
-            // Create a list item for each artist
-            const artistItem = document.createElement('li');
-            const artistLink = document.createElement('a');
-            artistLink.href = artist.url;
-            artistLink.innerText = artist.name;
+            // Create a list item for each tag
+            const tagItem = document.createElement('li');
+            const tagLink = document.createElement('a');
+            tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${tag.name}?rest=${publicationType}`;
+            tagLink.innerText = tag.name;
 
             // Create a span for count and add click event to toggle illustrations
             const countSpan = document.createElement('span');
@@ -522,18 +398,18 @@
             illustContainer.style.paddingLeft = '20px'; // Indent the illustrations
 
             // Populate illustrations
-            Object.values(artist.illustrations).forEach((illust) => {
+            Object.values(tag.illustrations).forEach((illust) => {
                 const illustItem = document.createElement('li');
                 let text = illust.alt || illust.title;
                 illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${text}</a>`;
                 illustContainer.appendChild(illustItem);
             });
 
-            // Append artist link and count span to artist item
-            artistItem.appendChild(artistLink);
-            artistItem.appendChild(countSpan);
-            artistItem.appendChild(illustContainer);
-            artistContainer.appendChild(artistItem);
+            // Append tag link and count span to tag item
+            tagItem.appendChild(tagLink);
+            tagItem.appendChild(countSpan);
+            tagItem.appendChild(illustContainer);
+            tagContainer.appendChild(tagItem);
 
             // Toggle illustration visibility when count is clicked
             countSpan.addEventListener('click', () => {
@@ -546,8 +422,8 @@
         const logButton = document.createElement('button');
         logButton.innerHTML = `Log Items`;
         logButton.addEventListener('click', () => {
-            console.log(JSON.stringify(sortedArtists));
-            console.log(sortedArtists);
+            console.log(JSON.stringify(sortedTags));
+            console.log(sortedTags);
         });
         const fetchButton = document.createElement('button');
         fetchButton.innerHTML = `Fetch All`;
@@ -557,7 +433,7 @@
 
         const bulkActionDiv = document.createElement('div');
         if (fetchedAll){
-            // Create UI for bulk follow/unfollow
+            // Create UI for bulk add/remove
             bulkActionDiv.style.marginTop = '10px';
             const minCountInput = document.createElement('input');
             minCountInput.type = 'number';
@@ -565,36 +441,23 @@
             minCountInput.style.width = '100px';
             minCountInput.style.marginRight = '5px';
     
-            // Follow button
-            const followButton = document.createElement('button');
-            followButton.innerText = 'Follow';
-            followButton.onclick = () => {
+            // Remove button
+            const removeButton = document.createElement('button');
+            removeButton.innerText = 'Remove';
+            removeButton.onclick = () => {
                 const minBookmarks = parseInt(minCountInput.value, 10);
                 if (isNaN(minBookmarks)) {
                     alert('Please enter a valid number for minimum bookmarks.');
                     return;
                 }
-                bulkFollow(minBookmarks);
-            };
-    
-            // Unfollow button
-            const unfollowButton = document.createElement('button');
-            unfollowButton.innerText = 'Unfollow';
-            unfollowButton.onclick = () => {
-                const minBookmarks = parseInt(minCountInput.value, 10);
-                if (isNaN(minBookmarks)) {
-                    alert('Please enter a valid number for minimum bookmarks.');
-                    return;
-                }
-                bulkUnfollow(minBookmarks);
+                bulkRemove(minBookmarks);
             };
             // Append elements to the bulk action div
             bulkActionDiv.appendChild(minCountInput);
-            bulkActionDiv.appendChild(followButton);
-            bulkActionDiv.appendChild(unfollowButton);
+            bulkActionDiv.appendChild(removeButton);
         }
 
-        summaryContent.appendChild(artistContainer);
+        summaryContent.appendChild(tagContainer);
         summaryContent.appendChild(totalContainer);
         summaryContent.appendChild(logButton);
         summaryContent.appendChild(fetchButton);
@@ -605,67 +468,12 @@
         document.body.appendChild(summaryDiv);
     }
 
-    // Function to debounce the summarizeBookmarks call
-    function debouncedSummarize() {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(summarizeBookmarks, 1000);
-    }
-    // Set up a MutationObserver to monitor changes in the bookmark list
-    const observer = new MutationObserver((mutations) => {
-        let added = false;
-        mutations.forEach(mutation => {
-            if (mutation.addedNodes.length) {
-                added = true;
-            }
-        });
-        if (added){
-            debouncedSummarize(); // Recalculate bookmarks whenever new nodes are added
-        }
-    });
-
-    // Function to monitor URL changes
-    function checkUrlChange() {
-        // Delay execution to allow content to load
-        setTimeout(() => {
-            debouncedSummarize(); // Recalculate the artist summary
-        }, 1000); // Adjust the timeout as needed
-    }
-
-    let previousHash = null;
-    // Function to check if the bookmarks list has changed
-    function checkForChanges() {
-        const currentHash = location.href; // Check the URL hash
-        if (currentHash !== previousHash) {
-            previousHash = currentHash; // Update the previous hash
-            debouncedSummarize(); // Recalculate the artist summary
-        }
-    }
-
     // Initial summary calculation when the page loads
     window.addEventListener('load', () => {
         setTimeout(async () => {
             await initializeVariables();
-            debouncedSummarize();
-            previousHash = location.href; // Set initial hash
-            setInterval(checkForChanges, 3000); // Poll every second for URL changes
-            // Start observing the bookmark list for changes
-
-            let targetNode = null;
-            targetNode = document.querySelector('ul');
-            if (targetNode) {
-                observer.observe(targetNode, { childList: true, subtree: true, });
-            }
-
-
-            targetNode = document.querySelector('#root');
-            if (targetNode) {
-                observer.observe(targetNode, { childList: true, subtree: true, });
-            }
-
-        }, 3000); // Wait to load
+            renderSummary();
+        }, 1000);
     });
-
-    // Listen for URL changes
-    window.addEventListener('popstate', checkUrlChange);
 
 })();
