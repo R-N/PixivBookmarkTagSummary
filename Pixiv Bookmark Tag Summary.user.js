@@ -48,9 +48,7 @@
         await delay(500);
     }
     async function add(tags, bookmarkIds){
-        if (restrict === null){
-            restrict = window.location.href.includes("rest=hide") ? 1 : 0;
-        }
+        const restrict = window.location.href.includes("rest=hide") ? 1 : 0;
         const payload = { 
             tags: tags,
             bookmarkIds: bookmarkIds,
@@ -392,6 +390,47 @@
             tagTile.style.textAlign = 'center';
             tagTile.style.cursor = 'pointer';
             tagTile.style.transition = 'all 0.3s ease';
+            tagTile.draggable = true;  // Enable dragging
+
+            // Store the tag name in the element's dataset for easy reference during drag and drop
+            tagTile.dataset.tagName = tag.name;
+
+            // Drag event listeners
+            tagTile.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', tag.name);
+            });
+
+            tagTile.addEventListener('dragover', (e) => {
+                e.preventDefault(); // Allow drop
+            });
+
+            tagTile.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                const targetTagName = e.dataTransfer.getData('text/plain');
+                const draggedTagName = tagTile.dataset.tagName;
+                if (draggedTagName === targetTagName) return;
+                // Confirm addition of the dragged tag to target tag's illustrations
+                if (!confirm(`Do you want to add the "${draggedTagName}" tag to all illustrations in "${targetTagName}"?`)) {
+                    return;
+                }
+    
+                // Add the dragged tag (A) to all illustrations in the target tag (B)
+                const targetTag = tags[targetTagName];
+                const bookmarkIdsToAddTag = Object.values(targetTag.illustrations).map(illust => illust.bookmarkId);
+                await add([draggedTagName], bookmarkIdsToAddTag);
+                console.log(`Tag "${draggedTagName}" added to all illustrations in "${targetTagName}".`);
+    
+                // Confirm removal of the target tag from its illustrations
+                if (!confirm(`Do you want to remove the "${targetTagName}" tag?`)) {
+                    return;
+                }
+    
+                // Remove the target tag from all its illustrations
+                await removeTags([targetTag]);
+    
+                console.log(`Tag "${targetTagName}" removed.`);
+            });
+
     
             const tagText = document.createElement('div');
             const tagLink = document.createElement('a');
