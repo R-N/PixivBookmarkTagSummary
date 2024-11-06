@@ -390,6 +390,7 @@
             tagTile.style.textAlign = 'center';
             tagTile.style.cursor = 'pointer';
             tagTile.style.transition = 'all 0.3s ease';
+            tagTile.style.position = "relative"; /*add this*/
             tagTile.draggable = true;  // Enable dragging
 
             // Store the tag name in the element's dataset for easy reference during drag and drop
@@ -431,6 +432,29 @@
                 console.log(`Tag "${targetTagName}" removed.`);
             });
 
+            // Create a delete button for each tile
+            const deleteButton = document.createElement('button');
+            deleteButton.innerText = 'Delete';
+            deleteButton.classList.add("delete-button");
+            deleteButton.style.position = 'absolute';
+            deleteButton.style.top = '5px';
+            deleteButton.style.right = '5px';
+            deleteButton.style.backgroundColor = 'red';
+            deleteButton.style.color = 'white';
+            deleteButton.style.border = 'none';
+            deleteButton.style.cursor = 'pointer';
+            deleteButton.style.display = 'none';  // Initially hidden
+
+            // Add click event for delete button
+            deleteButton.addEventListener('click', async (e) => {
+                e.stopPropagation(); // Prevent triggering tile click events
+                const confirmDelete = confirm(`Are you sure you want to delete the "${tag.name}" tag?`);
+                if (confirmDelete) {
+                    await removeTags([tag]);
+                    console.log(`Tag "${tag.name}" has been deleted from all illustrations.`);
+                }
+            });
+
     
             const tagText = document.createElement('div');
             const tagLink = document.createElement('a');
@@ -466,22 +490,26 @@
                     // Collapse the previously expanded tile
                     expandedTile.style.gridColumn = '';
                     expandedTile.querySelector('.illust-container').style.display = 'none';
+                    expandedTile.querySelector('.delete-button').style.display = 'none';
                 }
                 if (illustContainer.style.display === 'none') {
                     // Expand this tile
                     tagTile.style.gridColumn = '1 / -1'; // Full width in grid
                     illustContainer.style.display = 'block';
+                    deleteButton.style.display = 'block'; // Show delete button
                     expandedTile = tagTile;
                 } else {
                     // Collapse this tile if already expanded
                     tagTile.style.gridColumn = '';
                     illustContainer.style.display = 'none';
+                    deleteButton.style.display = 'none'; // Hide delete button
                     expandedTile = null;
                 }
             });
 
     
             tagTile.appendChild(tagText);
+            tagTile.appendChild(deleteButton);  // Append delete button to each tile
             tagTile.appendChild(illustContainer);  // Append hidden illustration container to each tile
             tagContainer.appendChild(tagTile);
             totalCount += count;
