@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.3.1
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -356,7 +356,8 @@
         const summaryContent = document.createElement('div');
         summaryContent.style.display = 'none'; // Initially hidden
         summaryContent.style.padding = '10px';
-        summaryContent.style.maxHeight = '300px'; // Set a maximum height
+        summaryContent.style.maxHeight = '400px'; // Set a maximum height
+        summaryContent.style.minWidth = '400px';
         summaryContent.style.overflowY = 'auto'; // Enable vertical scrolling
 
         // Toggle visibility of the tag container when the title is clicked
