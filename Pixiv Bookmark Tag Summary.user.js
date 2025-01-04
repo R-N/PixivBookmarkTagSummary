@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.3.1
+// @version      0.4.0
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -23,8 +23,22 @@
     function delay(ms) {
         return new Promise((res) => setTimeout(res, ms));
     }
+    function splitIntoBatches(array, batchSize) {
+        const batches = [];
+        for (let i = 0; i < array.length; i += batchSize) {
+            batches.push(array.slice(i, i + batchSize));
+        }
+        return batches;
+    }
     
     async function remove(tags, bookmarkIds){
+        if (bookmarkIds.length > bookmarkBatchSize){
+            const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
+            for (const batch of batches) {
+                await remove(tags, batch);
+            }
+            return;
+        }
         const payload = { 
             removeTags: tags,
             bookmarkIds: bookmarkIds,
@@ -48,6 +62,13 @@
         await delay(500);
     }
     async function add(tags, bookmarkIds){
+        if (bookmarkIds.length > bookmarkBatchSize){
+            const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
+            for (const batch of batches) {
+                await add(tags, batch);
+            }
+            return;
+        }
         const restrict = window.location.href.includes("rest=hide") ? 1 : 0;
         const payload = { 
             tags: tags,
@@ -65,7 +86,7 @@
             method: "POST",
         });
         if (response.ok && !response.error) {
-            console.log(`Added ${tags} from ${bookmarkIds}`);
+            console.log(`Added ${tags} to ${bookmarkIds}`);
         }else{
             console.error(`Add of ${tags} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
@@ -433,18 +454,22 @@
                 console.log(`Tag "${targetTagName}" removed.`);
             });
 
+            const buttonContainer = document.createElement('div');
+            buttonContainer.classList.add("button-container");
+            buttonContainer.style.position = 'absolute';
+            buttonContainer.style.top = '5px';
+            buttonContainer.style.right = '5px';
+            buttonContainer.style.display = 'flex';
+            buttonContainer.style.gap = '5px'; // Space between buttons
+            buttonContainer.style.display = 'none';  // Initially hidden
+
             // Create a delete button for each tile
             const deleteButton = document.createElement('button');
-            deleteButton.innerText = 'Delete';
-            deleteButton.classList.add("delete-button");
-            deleteButton.style.position = 'absolute';
-            deleteButton.style.top = '5px';
-            deleteButton.style.right = '5px';
+            deleteButton.innerText = '🗑';
             deleteButton.style.backgroundColor = 'red';
             deleteButton.style.color = 'white';
             deleteButton.style.border = 'none';
             deleteButton.style.cursor = 'pointer';
-            deleteButton.style.display = 'none';  // Initially hidden
 
             // Add click event for delete button
             deleteButton.addEventListener('click', async (e) => {
@@ -452,10 +477,88 @@
                 const confirmDelete = confirm(`Are you sure you want to delete the "${tag.name}" tag?`);
                 if (confirmDelete) {
                     await removeTags([tag]);
-                    console.log(`Tag "${tag.name}" has been deleted from all illustrations.`);
+                    // Client-side: Update `tags` and `userTags`
+                    delete tags[tag.name]; // Remove from the tags object
+                    const tagIndex = userTags.indexOf(tag.name);
+                    if (tagIndex !== -1) {
+                        userTags.splice(tagIndex, 1); // Remove from userTags
+                    }
+                
+                    // Remove the tag tile from the DOM
+                    tagTile.remove();
+                
+                    console.log(`Tag "${tag.name}" deleted locally and on the server.`);
+                    alert(`Tag "${tag.name}" has been deleted.`);
                 }
             });
 
+
+            const copyButton = document.createElement('button');
+            copyButton.innerText = '🗎';
+            copyButton.style.backgroundColor = 'gray';
+            copyButton.style.color = 'white';
+            copyButton.style.border = 'none';
+            copyButton.style.cursor = 'pointer';
+
+            copyButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(tag.name).then(() => {
+                    console.log(`Copied "${tag.name}" to clipboard.`);
+                }).catch((err) => {
+                    console.error(`Failed to copy tag: ${err}`);
+                });
+            });
+
+            // Edit button
+            const editButton = document.createElement('button');
+            editButton.innerText = '✏️'; // Unicode for edit icon
+            editButton.style.border = 'none';
+            editButton.style.background = 'yellow';
+            editButton.style.color = 'white';
+            editButton.style.cursor = 'pointer';
+
+            editButton.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                let newTagName = prompt(`Edit tag "${tag.name}". Enter a new name:`, tag.name);
+                if (!newTagName || newTagName.trim() === tag.name) return;
+            
+                newTagName = newTagName.trim();
+                const bookmarkIds = Object.values(tag.illustrations).map(illust => illust.bookmarkId);
+            
+                // Update server-side: Add the new tag and remove the old tag
+                await add([newTagName], bookmarkIds);
+                await remove([tag.name], bookmarkIds);
+
+                // Update the `tags` object
+                const oldTagName = tag.name;
+                delete tags[oldTagName]; // Remove the old tag entry
+                tag.name = newTagName;
+                tags[newTagName] = tag; // Add the updated tag entry
+
+                // Update the userTags array
+                const tagIndex = userTags.indexOf(oldTagName);
+                if (tagIndex !== -1) {
+                    userTags[tagIndex] = newTagName;
+                }
+
+                // Update the DOM: Modify the tag tile
+                const tagLink = tagTile.querySelector('a'); // Tag link element
+                const tagCount = tagTile.querySelector('div:last-child'); // Tag count element
+
+                if (tagLink) tagLink.innerText = newTagName; // Update tag name
+                if (tagLink) tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${newTagName}?rest=${publicationType}`; // Update URL
+                if (tagCount) tagCount.innerText = `(${Object.keys(tag.illustrations).length})`; // Count remains unchanged
+
+                console.log(`Renamed tag "${oldTagName}" to "${newTagName}".`);
+                alert(`Tag "${oldTagName}" has been renamed to "${newTagName}".`);
+
+                //summarizeAllBookmarks();
+            });
+    
+            // Add buttons to the container
+            buttonContainer.appendChild(editButton);
+            buttonContainer.appendChild(copyButton);
+            buttonContainer.appendChild(deleteButton);
     
             const tagText = document.createElement('div');
             const tagLink = document.createElement('a');
@@ -491,26 +594,26 @@
                     // Collapse the previously expanded tile
                     expandedTile.style.gridColumn = '';
                     expandedTile.querySelector('.illust-container').style.display = 'none';
-                    expandedTile.querySelector('.delete-button').style.display = 'none';
+                    expandedTile.querySelector('.button-container').style.display = 'none';
                 }
                 if (illustContainer.style.display === 'none') {
                     // Expand this tile
                     tagTile.style.gridColumn = '1 / -1'; // Full width in grid
                     illustContainer.style.display = 'block';
-                    deleteButton.style.display = 'block'; // Show delete button
+                    buttonContainer.style.display = 'block'; // Show button
                     expandedTile = tagTile;
                 } else {
                     // Collapse this tile if already expanded
                     tagTile.style.gridColumn = '';
                     illustContainer.style.display = 'none';
-                    deleteButton.style.display = 'none'; // Hide delete button
+                    buttonContainer.style.display = 'none'; // Hide button
                     expandedTile = null;
                 }
             });
 
     
             tagTile.appendChild(tagText);
-            tagTile.appendChild(deleteButton);  // Append delete button to each tile
+            tagTile.appendChild(buttonContainer);  // Append button to each tile
             tagTile.appendChild(illustContainer);  // Append hidden illustration container to each tile
             tagContainer.appendChild(tagTile);
             totalCount += count;
