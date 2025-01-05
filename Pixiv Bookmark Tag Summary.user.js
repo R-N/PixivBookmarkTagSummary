@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.1
+// @version      0.5.2
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -905,17 +905,21 @@
                 downloadObject(synonyms, "synonyms.json");
 
                 // Show an alert asking if the user wants to download the file
-                if (confirm(`Are you sure to translate ${Object.keys(translations).length} tags?`)) {
+                const toTranslateCount = Object.keys(translations).length;
+                let translatedCount = 0;
+                if (confirm(`Are you sure to translate ${toTranslateCount} tags?`)) {
                     // Trigger the download by clicking the link
                     for (let tagName in translations) {
                         let tag = tags[tagName];
                         try{
                             await renameTag(tag, translations[tag.name]);
+                            translatedCount += 1;
                         }catch(ex){
                             continue;
                         }
                     }
                 }
+                alert(`Translated ${translatedCount}/${toTranslateCount} tags`);
             }
 
             const translateButton = document.createElement('button');
