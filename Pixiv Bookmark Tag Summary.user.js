@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.4.0
+// @version      0.5.0
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -17,30 +17,96 @@
     let uid, lang, token;
     let pageInfo = {};
     let userTags = [];
+    // Function to count bookmarks by tag
+    let tags = {};
+    let sortedTags = [];
+    let illustrations = {};
+    let bookmarks = {};
+    let debounceTimer = null;
+    let fetchedAll = false;
+
+    let globalObjects = {
+        userTags: userTags,
+        tags: tags,
+        sortedTags: sortedTags,
+        illustrations: illustrations,
+        bookmarks: bookmarks,
+        uid: uid,
+        lang: lang,
+        token: token,
+        bookmarkBatchSize: bookmarkBatchSize
+    }
 
     let unsafeWindow_ = unsafeWindow;
     
-    function delay(ms) {
+    const delay = (ms) => {
         return new Promise((res) => setTimeout(res, ms));
     }
-    function splitIntoBatches(array, batchSize) {
+    const splitIntoBatches = (array, batchSize) => {
         const batches = [];
         for (let i = 0; i < array.length; i += batchSize) {
             batches.push(array.slice(i, i + batchSize));
         }
         return batches;
     }
+
+    const reverseObject = (obj) => {
+        const reversed = {};
     
-    async function remove(tags, bookmarkIds){
+        for (let [key, value] of Object.entries(obj)) {
+            if (reversed[value]) {
+                reversed[value].push(key);
+            } else {
+                reversed[value] = [key];
+            }
+        }
+    
+        return reversed;
+    }
+    const downloadObject = (obj, name="object.json") => {
+        // Convert the transformed dictionary to a JSON string
+        let jsonStr = JSON.stringify(obj, null, 4);
+
+        // Create a Blob from the JSON string
+        let blob = new Blob([jsonStr], { type: 'application/json' });
+
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);  // Append the link to the body
+        a.click();  // Trigger the download
+        document.body.removeChild(a);  // Remove the link after the download
+        URL.revokeObjectURL(url); 
+    }
+    
+    const remove = async (tagNames, bookmarkIds) => {
+        if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
+            console.log(`Skip removing tag ${tagNames} from ${bookmarkIds.length} illustrations`);
+            return;
+        }
+        if (tagNames.length > 1){
+            for (const tagName of tagNames) {
+                await remove([tagName], bookmarkIds);
+            }
+            return;
+        }
+        bookmarkIds = filterBookmarks(tagNames[0], bookmarkIds, false);
+        bookmarkIds = filterBookmarks2(tagNames[0], bookmarkIds, false);
+        if (!bookmarkIds || bookmarkIds.length == 0){
+            console.log(`Skip removing tag ${tagNames} because it has no illustrations`);
+            return;
+        }
+        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim().replace(/[_-]+$/, ''));
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
-                await remove(tags, batch);
+                await remove(tagNames, batch);
             }
             return;
         }
         const payload = { 
-            removeTags: tags,
+            removeTags: tagNames,
             bookmarkIds: bookmarkIds,
         };
         const response = await fetch("https://www.pixiv.net/ajax/illusts/bookmarks/remove_tags", {
@@ -55,23 +121,72 @@
             method: "POST",
         });
         if (response.ok && !response.error) {
-            console.log(`Removed ${tags} from ${bookmarkIds}`);
+            console.log(`Removed ${tagNames} from ${bookmarkIds}`);
         }else{
-            console.error(`Remove of ${tags} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
+            throw Error(`Remove of ${tagNames} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
         await delay(500);
     }
-    async function add(tags, bookmarkIds){
+    const includes = (source, negate=false) => {
+        let f = x => true;
+        if (typeof source === 'object' && !Array.isArray(source) && !(source instanceof Set)) {
+            f = key => (key in source);
+        }
+        if (Array.isArray(source)) {
+            f = key => source.includes(key);
+        }
+        if (source instanceof Set) {
+            f = key => source.has(key);
+        }
+        let f2 = f;
+        if (negate){
+            f2 = key => !f(key);
+        }
+        return f2;
+    }
+    const filterBookmarks = (source, keys, exclusion) => {
+        if(typeof source == "string"){
+            source = globalObjects.tags[source];
+            if (!source) return keys;
+            source = source.bookmarks;
+            if (!source) return keys;
+        }
+        let f2 = includes(source, exclusion);
+        return keys.filter(f2);
+    }
+    const filterBookmarks2 = (tagName, bookmarkIds, exclusion) => {
+        let bookmarks = bookmarkIds.map(id => globalObjects.bookmarks[id]);
+        bookmarks = bookmarks.filter(b => includes(b.associatedTags, exclusion)(tagName));
+        return bookmarks.map(b => b.id);
+    }
+    const add = async (tagNames, bookmarkIds) => {
+        if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
+            console.log(`Skip adding tag ${tagNames} to ${bookmarkIds.length} illustrations`);
+            return;
+        }
+        if (tagNames.length > 1){
+            for (const tagName of tagNames) {
+                await add([tagName], bookmarkIds);
+            }
+            return;
+        }
+        bookmarkIds = filterBookmarks(tagNames[0], bookmarkIds, true);
+        bookmarkIds = filterBookmarks2(tagNames[0], bookmarkIds, true);
+        if (!bookmarkIds || bookmarkIds.length == 0){
+            console.log(`Skip adding tag ${tagNames} because it has no illustrations`);
+            return;
+        }
+        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim().replace(/[_-]+$/, ''));
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
-                await add(tags, batch);
+                await add(tagNames, batch);
             }
             return;
         }
         const restrict = window.location.href.includes("rest=hide") ? 1 : 0;
         const payload = { 
-            tags: tags,
+            tags: tagNames,
             bookmarkIds: bookmarkIds,
         };
         const response = await fetch("https://www.pixiv.net/ajax/illusts/bookmarks/add_tags", {
@@ -86,21 +201,116 @@
             method: "POST",
         });
         if (response.ok && !response.error) {
-            console.log(`Added ${tags} to ${bookmarkIds}`);
+            console.log(`Added ${tagNames} to ${bookmarkIds}`);
         }else{
-            console.error(`Add of ${tags} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
+            throw Error(`Add of ${tagNames} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
         await delay(500);
     }
 
-    async function removeTags(tags){
+    const getTagTranslation = async (tag) => {
+        const apiBaseUrl = "https://www.pixiv.net/ajax/search/tags/";
+        const apiUrl = `${apiBaseUrl}${encodeURIComponent(tag)}?lang=en`;
+        let translation = null;
+            
+        try {
+            // Fetch the tag translation from the API
+            const response = await fetch(apiUrl, { credentials: 'same-origin' });
+            if (!response.ok) {
+                console.error(`Failed to fetch translation for tag: ${tag}`);
+                return null;
+            }
+
+            // Parse the JSON response
+            const json = await response.json();
+            if (json.error) {
+                console.error(`API error for tag: ${tag}`, json.message || "Unknown error");
+                return null;
+            }
+
+            // Extract translation based on the order of preference
+            translation =
+                json.body?.tagTranslation?.[tag]?.en ||
+                json.body?.breadcrumbs?.successor?.pop()?.translation?.en ||
+                json.body?.tagTranslation?.[tag]?.romaji ||
+                json.body?.pixpedia?.tag ||
+                null; // No translation available
+
+            if (translation) {
+                translation = translation.replace(/ /g, "_");
+                console.log(`Translated: ${tag} -> ${translation}`);
+                return translation;
+            } else {
+                console.warn(`No translation found for tag: ${tag}`);
+                return null;
+            }
+
+            // Delay to avoid overloading the server
+        } catch (err) {
+            console.error(`Error fetching translation for tag: ${tag}`, err);
+            return null;
+        }finally {
+            await delay(500);
+        }
+        return translation;
+    }
+
+    const renameTag = async (tag, newTagName, tagTile=null, publicationType=null) => {
+        if (!publicationType){
+            publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
+        }
+        if (typeof tag == "string"){
+            tag = globalObjects.tags[tag];
+        }
+        
+        let bookmarkIds = Object.values(tag.bookmarks).map(illust => illust.bookmarkId);
+
+        if (!bookmarkIds || bookmarkIds.length == 0){
+            console.log(`Skip renaming tag ${tag.name} -> ${newTagName} because it has no illustrations`);
+            return;
+        }
+            
+        // Update server-side: Add the new tag and remove the old tag
+        await add([newTagName], bookmarkIds);
+        await remove([tag.name], bookmarkIds);
+
+        // Update the `tags` object
+        const oldTagName = tag.name;
+        if (tags){
+            delete tags[oldTagName];
+            tags[newTagName] = tag;
+        }
+        tag.name = newTagName;
+
+        // Update the userTags array
+        const tagIndex = userTags.indexOf(oldTagName);
+        if (tagIndex !== -1) {
+            userTags[tagIndex] = newTagName;
+        }
+
+        // Update the DOM: Modify the tag tile
+        if (tagTile){
+            const tagLink = tagTile.querySelector('a'); // Tag link element
+            const tagCount = tagTile.querySelector('div:last-child'); // Tag count element
+    
+            if (tagLink) tagLink.innerText = newTagName; // Update tag name
+            if (tagLink) tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${newTagName}?rest=${publicationType}`; // Update URL
+            if (tagCount) tagCount.innerText = `(${Object.keys(tag.illustrations).length})`; // Count remains unchanged
+        }
+        console.log(`Renamed tag "${oldTagName}" to "${newTagName}".`);
+    }
+
+    const removeTags = async (tags) => {
         for (const tag of tags) {
+            if (typeof tag == "string"){
+                tag = tags[tag];
+            }
             const illusts = Object.values(tag.illustrations).map((illust) => illust.bookmarkId);
             await remove([tag.name], illusts);
         }
     }
 
-    function sortByParody(array) {
+    const sortByParody = (array) => {
         const sortFunc = (a, b) => {
           let reg = /^[a-zA-Z0-9]/;
           if (reg.test(a) && !reg.test(b)) return -1;
@@ -115,7 +325,7 @@
         return withoutParody.concat(withParody);
     }
 
-    async function fetchUserTags() {
+    const fetchUserTags = async () => {
         const tagsRaw = await fetch(
         `/ajax/user/${uid}/illusts/bookmark/tags?lang=${lang}`
         );
@@ -152,7 +362,7 @@
     }
     
     // Function to bulk remove or remove tags based on minimum bookmark count
-    async function bulkRemove(minBookmarks) {
+    const bulkRemove = async (minBookmarks) => {
         // Filter tags based on the bookmark count
         const selectedTags = sortedTags.filter((tag) => {
             const bookmarkCount = countIllusts(tag);
@@ -173,7 +383,7 @@
         removeTags(selectedTags);
     }
     
-    async function fetchTokenPolyfill() {
+    const fetchTokenPolyfill = async () => {
         // get token
         const userRaw = await fetch(
             "/bookmark_add.php?type=illust&illust_id=83540927"
@@ -188,8 +398,8 @@
         const tokenEnd = userRes.indexOf(";", tokenPos);
         return userRes.slice(tokenPos, tokenEnd).split('"')[1];
     }
-    async function initializeVariables() {
-        async function polyfill() {
+    const initializeVariables = async () => {
+        const polyfill = async () => {
             try {
                 const dataLayer = unsafeWindow_["dataLayer"][0];
                 uid = dataLayer["user_id"];
@@ -217,7 +427,7 @@
         }
 
     }
-    async function fetchBookmarks(uid, tagToQuery='', offset=0, publicationType=null) {
+    const fetchBookmarks = async (uid, tagToQuery='', offset=0, publicationType=null) => {
         if (!publicationType){
             publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
         }
@@ -251,7 +461,7 @@
         return bookmarks;
     }
 
-    async function fetchAllBookmarks(uid, tagToQuery='', publicationType=null){
+    const fetchAllBookmarks = async (uid, tagToQuery='', publicationType=null) => {
         let total, // total bookmarks of specific tag
             index = 0; // counter of do-while loop
         let finalBookmarks = null;
@@ -277,34 +487,31 @@
         return finalBookmarks;
     }
 
-    // Function to count bookmarks by tag
-    let tags = {};
-    let sortedTags = [];
-    let debounceTimer = null;
-    let fetchedAll = false;
 
     // Function to check if the bookmarks list has changed
     const countIllusts = (tag) => Object.keys(tag.illustrations).length;
+    const countBookmarks = (tag) => Object.keys(tag.bookmarks).length;
     const illustComparator = (a, b) => countIllusts(b) - countIllusts(a);
 
-    function updateObject(target, source){
+    const updateObject = (target, source) => {
         if (!target) return source;
         //target = {...target, ...source};
         Object.assign(target, source);
         return target;
     }
 
-    function saveTag(tag){
+    const saveTag = (tag) => {
         if (!tags[tag]){
             userTags.push(tag);
             tags[tag] = {
                 name: tag,
                 illustrations: {},
+                bookmarks: {},
             };
         }
         return tags[tag];
     }
-    function saveIllust(tag, illust){
+    const saveIllust = (tag, illust) => {
         tag = saveTag(tag);
         let illustId = illust.id;
         if (tag.illustrations[illustId]) {
@@ -313,10 +520,19 @@
         }else{
             tag.illustrations[illustId] = illust;
         }
+        illustrations[illustId] = illust;
+        let bookmarkId = illust.bookmarkId;
+        if (tag.bookmarks[bookmarkId]) {
+            tag.bookmarks[bookmarkId] = updateObject(tag.bookmarks[bookmarkId], illust);
+            illust = tag.bookmarks[bookmarkId];
+        }else{
+            tag.bookmarks[bookmarkId] = illust;
+        }
+        bookmarks[bookmarkId] = illust;
         return illust;
     }
 
-    async function summarizeAllBookmarks(){
+    const summarizeAllBookmarks = async () => {
         
         userTags = await fetchUserTags();
         userTags.forEach((tag) => {
@@ -350,7 +566,7 @@
 
 
     // Function to render the summary UI
-    function renderSummary() {
+    const renderSummary = () => {
         let publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
         // Clear previous summary if exists
         const existingSummary = document.getElementById('tag-summary');
@@ -367,6 +583,7 @@
         summaryDiv.style.padding = '10px';
         summaryDiv.style.border = '1px solid #ccc';
         summaryDiv.style.zIndex = '9999';
+        summaryDiv.style.color = 'black';
 
         const title = document.createElement('h3');
         title.innerText = 'Tags';
@@ -413,6 +630,7 @@
             tagTile.style.cursor = 'pointer';
             tagTile.style.transition = 'all 0.3s ease';
             tagTile.style.position = "relative"; /*add this*/
+            tagTile.style.color = 'black';
             tagTile.draggable = true;  // Enable dragging
 
             // Store the tag name in the element's dataset for easy reference during drag and drop
@@ -522,40 +740,40 @@
                 let newTagName = prompt(`Edit tag "${tag.name}". Enter a new name:`, tag.name);
                 if (!newTagName || newTagName.trim() === tag.name) return;
             
-                newTagName = newTagName.trim();
-                const bookmarkIds = Object.values(tag.illustrations).map(illust => illust.bookmarkId);
-            
-                // Update server-side: Add the new tag and remove the old tag
-                await add([newTagName], bookmarkIds);
-                await remove([tag.name], bookmarkIds);
-
-                // Update the `tags` object
                 const oldTagName = tag.name;
-                delete tags[oldTagName]; // Remove the old tag entry
-                tag.name = newTagName;
-                tags[newTagName] = tag; // Add the updated tag entry
+                newTagName = newTagName.trim();
 
-                // Update the userTags array
-                const tagIndex = userTags.indexOf(oldTagName);
-                if (tagIndex !== -1) {
-                    userTags[tagIndex] = newTagName;
+                await renameTag(tag, newTagName, tagTile);
+                alert(`Tag "${oldTagName}" has been renamed to "${newTagName}".`);
+            });
+
+            const translateButton = document.createElement('button');
+            translateButton.innerText = '🌐'; // Unicode globe icon for translation
+            translateButton.style.border = 'none';
+            translateButton.style.background = 'blue';
+            translateButton.style.color = 'white';
+            translateButton.style.cursor = 'pointer';
+
+            translateButton.addEventListener('click', async (e) => {
+                e.stopPropagation();
+
+                // Fetch translation for the current tag
+                const translatedTag = await getTagTranslation(tag.name);
+                if (!translatedTag || translatedTag == tag.name) {
+                    alert(`No translation found for tag: ${tag.name}`);
+                    return;
                 }
 
-                // Update the DOM: Modify the tag tile
-                const tagLink = tagTile.querySelector('a'); // Tag link element
-                const tagCount = tagTile.querySelector('div:last-child'); // Tag count element
-
-                if (tagLink) tagLink.innerText = newTagName; // Update tag name
-                if (tagLink) tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${newTagName}?rest=${publicationType}`; // Update URL
-                if (tagCount) tagCount.innerText = `(${Object.keys(tag.illustrations).length})`; // Count remains unchanged
-
-                console.log(`Renamed tag "${oldTagName}" to "${newTagName}".`);
-                alert(`Tag "${oldTagName}" has been renamed to "${newTagName}".`);
-
-                //summarizeAllBookmarks();
+                // Confirm translation
+                if (confirm(`Translate "${tag.name}" to "${translatedTag}"?`)) {
+                    const oldTagName = tag.name;
+                    await renameTag(tag, translatedTag, tagTile);
+                    alert(`Tag "${oldTagName}" has been renamed to "${translatedTag}".`);
+                }
             });
     
             // Add buttons to the container
+            buttonContainer.appendChild(translateButton);
             buttonContainer.appendChild(editButton);
             buttonContainer.appendChild(copyButton);
             buttonContainer.appendChild(deleteButton);
@@ -565,7 +783,6 @@
             tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${tag.name}?rest=${publicationType}`;
             tagLink.innerText = `${tag.name}`;
             tagLink.style.textDecoration = 'none';
-            tagLink.style.color = 'black';
             tagLink.style.display = 'block';
             tagText.appendChild(tagLink);
     
@@ -622,6 +839,7 @@
         totalContainer.innerHTML = `<span>Total: ${totalCount}</span>`;
         const logButton = document.createElement('button');
         logButton.innerHTML = `Log Items`;
+        logButton.style.marginRight = '5px';
         logButton.addEventListener('click', () => {
             console.log(JSON.stringify(sortedTags));
             console.log(sortedTags);
@@ -653,7 +871,60 @@
                 }
                 bulkRemove(minBookmarks);
             };
+            
+
+            const translateTags = async () => {
+                const translations = {}; // Dictionary to store tag translations
+            
+                for (const tagName in tags) {
+                    if (!tags[tagName].bookmarks || countIllusts(tags[tagName]) == 0){
+                        continue;
+                    }
+                    // Skip tags that are purely alphanumeric, whitespace, or common symbols
+                    if (/^[a-zA-Z0-9\s~!@#\$%\^&*\(\)\-_=\+\[\]{}\\|;:'",\.\/<>\?]+$/.test(tagName)) {
+                        console.log(`Skipping tag (no translation needed): ${tagName}`);
+                        continue;
+                    }
+                    const translation = await getTagTranslation(tagName);
+                    
+                    if (translation){
+                        translations[tagName] = translation;
+                    }
+                }
+            
+                console.log(translations);
+                console.log(JSON.stringify(translations));
+
+                let synonyms = reverseObject(translations);
+                console.log(synonyms);
+                console.log(JSON.stringify(synonyms));
+
+                downloadObject(translations, "translations.json");
+                downloadObject(synonyms, "synonyms.json");
+
+                // Show an alert asking if the user wants to download the file
+                if (confirm(`Are you sure to translate ${Object.keys(translations).length} tags?`)) {
+                    // Trigger the download by clicking the link
+                    for (let tagName in translations) {
+                        let tag = tags[tagName];
+                        try{
+                            await renameTag(tag, translations[tag.name]);
+                        }catch(ex){
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            const translateButton = document.createElement('button');
+            translateButton.innerHTML = `Translate Tags`;
+            translateButton.style.marginRight = '5px';
+            translateButton.addEventListener('click', async () => {
+                await translateTags();
+            });
+    
             // Append elements to the bulk action div
+            bulkActionDiv.appendChild(translateButton);
             bulkActionDiv.appendChild(minCountInput);
             bulkActionDiv.appendChild(removeButton);
         }
