@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.0
+// @version      0.5.1
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -210,7 +210,7 @@
 
     const getTagTranslation = async (tag) => {
         const apiBaseUrl = "https://www.pixiv.net/ajax/search/tags/";
-        const apiUrl = `${apiBaseUrl}${encodeURIComponent(tag)}?lang=en`;
+        const apiUrl = `${apiBaseUrl}${encodeURIComponent(tag)}?lang=${lang}`;
         let translation = null;
             
         try {
@@ -230,6 +230,8 @@
 
             // Extract translation based on the order of preference
             translation =
+                json.body?.tagTranslation?.[tag]?[lang] ||
+                json.body?.breadcrumbs?.successor?.pop()?.translation?[lang] ||
                 json.body?.tagTranslation?.[tag]?.en ||
                 json.body?.breadcrumbs?.successor?.pop()?.translation?.en ||
                 json.body?.tagTranslation?.[tag]?.romaji ||
