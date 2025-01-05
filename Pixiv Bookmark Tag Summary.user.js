@@ -230,8 +230,8 @@
 
             // Extract translation based on the order of preference
             translation =
-                json.body?.tagTranslation?.[tag]?[lang] ||
-                json.body?.breadcrumbs?.successor?.pop()?.translation?[lang] ||
+                json.body?.tagTranslation?.[tag]?.[lang] ||
+                json.body?.breadcrumbs?.successor?.pop()?.translation?.[lang] ||
                 json.body?.tagTranslation?.[tag]?.en ||
                 json.body?.breadcrumbs?.successor?.pop()?.translation?.en ||
                 json.body?.tagTranslation?.[tag]?.romaji ||
