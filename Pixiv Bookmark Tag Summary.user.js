@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.4
+// @version      0.5.5
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -99,7 +99,7 @@
             console.log(`Skip removing tag ${tagNames} because it has no illustrations`);
             return;
         }
-        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim().replace(/[_-]+$/, ''));
+        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim());
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
@@ -178,7 +178,7 @@
             console.log(`Skip adding tag ${tagNames} because the illustrations already have it`);
             return;
         }
-        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim().replace(/[_-]+$/, ''));
+        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim());
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
