@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.3
+// @version      0.5.4
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -82,7 +82,7 @@
         URL.revokeObjectURL(url); 
     }
     
-    const remove = async (tagNames, bookmarkIds) => {
+    const remove = async (tagNames, bookmarkIds, isBatch=false) => {
         if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
             console.log(`Skip removing tag ${tagNames} from ${bookmarkIds.length} illustrations`);
             return;
@@ -92,7 +92,7 @@
                 await remove([tagName], bookmarkIds);
             }
             return;
-        }
+    }
         bookmarkIds = filterBookmarks(tagNames[0], bookmarkIds, false);
         bookmarkIds = filterBookmarks2(tagNames[0], bookmarkIds, false);
         if (!bookmarkIds || bookmarkIds.length == 0){
@@ -103,7 +103,7 @@
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
-                await remove(tagNames, batch);
+                await remove(tagNames, batch, true);
             }
             return;
         }
@@ -159,9 +159,9 @@
     const filterBookmarks2 = (tagName, bookmarkIds, exclusion) => {
         let bookmarks = bookmarkIds.map(id => globalObjects.bookmarks[id]);
         bookmarks = bookmarks.filter(b => includes(b.associatedTags, exclusion)(tagName));
-        return bookmarks.map(b => b.id);
+        return bookmarks.map(b => b.bookmarkId);
     }
-    const add = async (tagNames, bookmarkIds) => {
+    const add = async (tagNames, bookmarkIds, isBatch=false) => {
         if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
             console.log(`Skip adding tag ${tagNames} to ${bookmarkIds.length} illustrations`);
             return;
@@ -182,7 +182,7 @@
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
-                await add(tagNames, batch);
+                await add(tagNames, batch, true);
             }
             return;
         }
