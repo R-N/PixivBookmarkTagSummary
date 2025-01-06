@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.5
+// @version      0.6.0
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -25,6 +25,7 @@
     let translations = {};
     let debounceTimer = null;
     let fetchedAll = false;
+    let tagTiles = {};
 
     let globalObjects = {
         userTags: userTags,
@@ -36,7 +37,8 @@
         uid: uid,
         lang: lang,
         token: token,
-        bookmarkBatchSize: bookmarkBatchSize
+        bookmarkBatchSize: bookmarkBatchSize,
+        tagTiles: tagTiles
     }
 
     let unsafeWindow_ = unsafeWindow;
@@ -81,12 +83,31 @@
         document.body.removeChild(a);  // Remove the link after the download
         URL.revokeObjectURL(url); 
     }
+
+    const fixTagName = (str) => {
+        return str.replace(/ /g, "_").slice(0, 20).trim();
+    }
+
+    const getTag = (tag) => {
+        if (typeof tag == "string"){
+            return tags[tag];
+        }
+        return tag;
+    }
+
+    const getTagName = (tag) => {
+        if (typeof tag !== "string"){
+            return tag.name;
+        }
+        return tag;
+    }
     
     const remove = async (tagNames, bookmarkIds, isBatch=false) => {
         if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
             console.log(`Skip removing tag ${tagNames} from ${bookmarkIds.length} illustrations`);
             return;
         }
+        tagNames = tagNames.map(getTagName);
         if (tagNames.length > 1){
             for (const tagName of tagNames) {
                 await remove([tagName], bookmarkIds);
@@ -99,7 +120,7 @@
             console.log(`Skip removing tag ${tagNames} because it has no illustrations`);
             return;
         }
-        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim());
+        tagNames = tagNames.map(fixTagName);
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
@@ -123,6 +144,12 @@
             method: "POST",
         });
         if (response.ok && !response.error) {
+            tagNames.forEach((tagName) => {
+                const bookmarks = bookmarkIds.map(id => globalObjects.bookmarks[id]);
+                bookmarks.forEach(b => {
+                    removeIllust(tagName, b);
+                });
+            })
             console.log(`Removed ${tagNames} from ${bookmarkIds}`);
         }else{
             throw Error(`Remove of ${tagNames} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
@@ -164,27 +191,28 @@
     const add = async (tagNames, bookmarkIds, isBatch=false) => {
         if (!tagNames || !bookmarkIds || tagNames.length == 0 || bookmarkIds.length == 0){
             console.log(`Skip adding tag ${tagNames} to ${bookmarkIds.length} illustrations`);
-            return;
+            return tagNames;
         }
+        tagNames = tagNames.map(getTagName);
         if (tagNames.length > 1){
             for (const tagName of tagNames) {
                 await add([tagName], bookmarkIds);
             }
-            return;
+            return tagNames;
         }
         bookmarkIds = filterBookmarks(tagNames[0], bookmarkIds, true);
         bookmarkIds = filterBookmarks2(tagNames[0], bookmarkIds, true);
         if (!bookmarkIds || bookmarkIds.length == 0){
             console.log(`Skip adding tag ${tagNames} because the illustrations already have it`);
-            return;
+            return tagNames;
         }
-        tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim());
+        tagNames = tagNames.map(fixTagName);
         if (bookmarkIds.length > bookmarkBatchSize){
             const batches = splitIntoBatches(bookmarkIds, bookmarkBatchSize);
             for (const batch of batches) {
                 await add(tagNames, batch, true);
             }
-            return;
+            return tagNames;
         }
         const restrict = window.location.href.includes("rest=hide") ? 1 : 0;
         const payload = { 
@@ -203,11 +231,19 @@
             method: "POST",
         });
         if (response.ok && !response.error) {
+            tagNames.forEach((tagName) => {
+                const tag = saveTag(tagName);
+                const bookmarks = bookmarkIds.map(id => globalObjects.bookmarks[id]);
+                bookmarks.forEach(b => {
+                    saveIllust(tag, b);
+                });
+            })
             console.log(`Added ${tagNames} to ${bookmarkIds}`);
         }else{
             throw Error(`Add of ${tagNames} failed for ${bookmarkIds} with status ${response.status} and error ${response.error}: ${response.message}`);
         }
         await delay(500);
+        return tagNames;
     }
 
     const getTagTranslation = async (tag) => {
@@ -251,7 +287,7 @@
             }
 
             if (translation) {
-                translation = translation.replace(/ /g, "_");
+                translation = fixTagName(translation);
                 console.log(`Translated: ${tag} -> ${translation}`);
                 translations[tag] = translation;
                 return translation;
@@ -270,13 +306,12 @@
         return translation;
     }
 
-    const renameTag = async (tag, newTagName, tagTile=null, publicationType=null) => {
+    const renameTag = async (tag, newTagName, publicationType=null) => {
         if (!publicationType){
             publicationType = window.location.href.includes("rest=hide") ? "hide" : "show";
         }
-        if (typeof tag == "string"){
-            tag = globalObjects.tags[tag];
-        }
+        tag = getTag(tag);
+        const tagTile = globalObjects.tagTiles[tag.name];
         
         let bookmarkIds = Object.values(tag.bookmarks).map(illust => illust.bookmarkId);
 
@@ -285,23 +320,20 @@
             return;
         }
             
+        newTagName = fixTagName(newTagName);
+        if (includes(tags)(newTagName)){
+            if (confirm(`Tag ${newTagName} already exists. Do you want to move ${tag.name} into ${newTagName}?`)){
+                moveTag(tag.name, newTagName, true);
+            }
+            return;
+        }
         // Update server-side: Add the new tag and remove the old tag
-        await add([newTagName], bookmarkIds);
+        newTagName = (await add([newTagName], bookmarkIds))[0];
         await remove([tag.name], bookmarkIds);
 
         // Update the `tags` object
         const oldTagName = tag.name;
-        if (tags){
-            delete tags[oldTagName];
-            tags[newTagName] = tag;
-        }
         tag.name = newTagName;
-
-        // Update the userTags array
-        const tagIndex = userTags.indexOf(oldTagName);
-        if (tagIndex !== -1) {
-            userTags[tagIndex] = newTagName;
-        }
 
         // Update the DOM: Modify the tag tile
         if (tagTile){
@@ -311,17 +343,42 @@
             if (tagLink) tagLink.innerText = newTagName; // Update tag name
             if (tagLink) tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${newTagName}?rest=${publicationType}`; // Update URL
             if (tagCount) tagCount.innerText = `(${Object.keys(tag.illustrations).length})`; // Count remains unchanged
+
+            tagTiles[newTagName] = tagTile;
         }
+
+        removeTagLocal(oldTagName, true);
         console.log(`Renamed tag "${oldTagName}" to "${newTagName}".`);
     }
 
+
+    const deleteArrayElement = (arr, el) => {
+        let index = arr.indexOf(el);
+        if (index !== -1) {
+            arr.splice(index, 1);
+        }
+    }
+
+    const removeTagLocal = (tagName, isRename=false) => {
+        deleteArrayElement(userTags, tagName);
+        if (!isRename){
+            deleteArrayElement(sortedTags, tags[tagName]);
+        } 
+        delete tags[tagName];
+        if (tagTiles[tagName]){
+            if (!isRename){
+                tagTiles[tagName].remove();
+            } 
+            delete tagTiles[tagName];
+        }
+    }
+
     const removeTags = async (tags) => {
-        for (const tag of tags) {
-            if (typeof tag == "string"){
-                tag = tags[tag];
-            }
+        for (let tag of tags) {
+            tag = getTag(tag);
             const illusts = Object.values(tag.illustrations).map((illust) => illust.bookmarkId);
             await remove([tag.name], illusts);
+            removeTagLocal(tag.name);
         }
     }
 
@@ -390,12 +447,11 @@
         }
 
         // Show confirmation dialog
-        const confirmation = confirm(
-            `Are you sure you want to remove ${selectedTags.length} tags?`
-        );
+        const confirmation = confirm(`Are you sure you want to remove ${selectedTags.length} tags?`);
         if (!confirmation) return;
 
-        removeTags(selectedTags);
+        await removeTags(selectedTags);
+        alert(`Removed ${selectedTags.length} tags`);
     }
     
     const fetchTokenPolyfill = async () => {
@@ -516,6 +572,7 @@
     }
 
     const saveTag = (tag) => {
+        tag = getTagName(tag);
         if (!tags[tag]){
             userTags.push(tag);
             tags[tag] = {
@@ -547,6 +604,16 @@
         return illust;
     }
 
+    const removeIllust = (tag, illust) => {
+        tag = getTag(tag);
+        if (!tag) return;
+        delete tag.illustrations[illust.id];
+        delete tag.bookmarks[illust.bookmarkId];
+        if (countIllusts(tag) == 0){
+            removeTags([tag]);
+        }
+    }
+
     const summarizeAllBookmarks = async () => {
         
         userTags = await fetchUserTags();
@@ -573,12 +640,54 @@
             total += 1;
         });
         console.log(`Processed ${total} illusts with ${Object.keys(tags).length} tags`);
-        sortedTags = Object.values(tags).sort(illustComparator);
+        sortTags();
         fetchedAll = true;
         requestAnimationFrame(renderSummary);
         //renderSummary();
     }
 
+    const sortTags = () =>{
+        sortedTags = Object.values(tags).sort(illustComparator);
+        globalObjects.sortedTags = sortedTags;
+    }
+
+    const moveTag = async (tag, targetTagName, forceRemove=false) => {
+        // Add the dragged tag (A) to all illustrations in the target tag (B)
+        tag = getTag(tag);
+        const targetTag = tags[targetTagName];
+        const bookmarkIds = Object.values(targetTag.illustrations).map(illust => illust.bookmarkId);
+        await add([tag.name], bookmarkIds);
+        populateTagTile(tag);
+        console.log(`Tag "${tag.name}" added to all illustrations in "${targetTagName}".`);
+
+        if (forceRemove || confirm(`Do you want to remove the "${targetTagName}" tag?`)) {
+            await removeTags([targetTagName]);
+            console.log(`Tag "${targetTagName}" removed.`);
+        }
+        sortTags();
+    }
+
+    //populate tag tile
+    const populateTagTile = (tag) => {
+        tag = getTag(tag);
+
+        const tagTile = tagTiles[tag.name];
+        if (!tagTile) return;
+
+        const count = countIllusts(tag);
+        const tagCount = tagTile.querySelector(".tag-count");
+        tagCount.innerText = `(${count})`;
+
+        const illustContainer = tagTile.querySelector(".illust-container")
+        illustContainer.innerHTML = "";
+        // Populate illustrations
+        Object.values(tag.illustrations).forEach((illust) => {
+            const illustItem = document.createElement('li');
+            illustItem.style.marginBottom = '5px';
+            illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${illust.alt || illust.title}</a>`;
+            illustContainer.appendChild(illustItem);
+        });
+    }
 
     // Function to render the summary UI
     const renderSummary = () => {
@@ -633,8 +742,10 @@
         // Keep track of the currently expanded tile
         let expandedTile = null;
         // Generate each tag as a tile with clickable illustration list
+
+        Object.keys(tagTiles).forEach(key => delete tagTiles[key]);
         Object.values(sortedTags).forEach((tag) => {
-            let count = countIllusts(tag);
+            const count = countIllusts(tag);
             if (!count) return;
     
             const tagTile = document.createElement('div');
@@ -650,6 +761,9 @@
 
             // Store the tag name in the element's dataset for easy reference during drag and drop
             tagTile.dataset.tagName = tag.name;
+
+            tagTiles[tag.name] = tagTile;
+            tagTile.tag = tag;
 
             // Drag event listeners
             tagTile.addEventListener('dragstart', (e) => {
@@ -669,22 +783,8 @@
                 if (!confirm(`Do you want to add the "${draggedTagName}" tag to all illustrations in "${targetTagName}"?`)) {
                     return;
                 }
-    
-                // Add the dragged tag (A) to all illustrations in the target tag (B)
-                const targetTag = tags[targetTagName];
-                const bookmarkIdsToAddTag = Object.values(targetTag.illustrations).map(illust => illust.bookmarkId);
-                await add([draggedTagName], bookmarkIdsToAddTag);
-                console.log(`Tag "${draggedTagName}" added to all illustrations in "${targetTagName}".`);
-    
-                // Confirm removal of the target tag from its illustrations
-                if (!confirm(`Do you want to remove the "${targetTagName}" tag?`)) {
-                    return;
-                }
-    
-                // Remove the target tag from all its illustrations
-                await removeTags([targetTag]);
-    
-                console.log(`Tag "${targetTagName}" removed.`);
+                
+                moveTag(draggedTagName, targetTagName);
             });
 
             const buttonContainer = document.createElement('div');
@@ -695,6 +795,7 @@
             buttonContainer.style.display = 'flex';
             buttonContainer.style.gap = '5px'; // Space between buttons
             buttonContainer.style.display = 'none';  // Initially hidden
+            tagTile.appendChild(buttonContainer);
 
             // Create a delete button for each tile
             const deleteButton = document.createElement('button');
@@ -709,18 +810,7 @@
                 e.stopPropagation(); // Prevent triggering tile click events
                 const confirmDelete = confirm(`Are you sure you want to delete the "${tag.name}" tag?`);
                 if (confirmDelete) {
-                    await removeTags([tag]);
-                    // Client-side: Update `tags` and `userTags`
-                    delete tags[tag.name]; // Remove from the tags object
-                    const tagIndex = userTags.indexOf(tag.name);
-                    if (tagIndex !== -1) {
-                        userTags.splice(tagIndex, 1); // Remove from userTags
-                    }
-                
-                    // Remove the tag tile from the DOM
-                    tagTile.remove();
-                
-                    console.log(`Tag "${tag.name}" deleted locally and on the server.`);
+                    await removeTags([tag.name]);
                     alert(`Tag "${tag.name}" has been deleted.`);
                 }
             });
@@ -758,7 +848,7 @@
                 const oldTagName = tag.name;
                 newTagName = newTagName.trim();
 
-                await renameTag(tag, newTagName, tagTile);
+                await renameTag(tag, newTagName);
                 alert(`Tag "${oldTagName}" has been renamed to "${newTagName}".`);
             });
 
@@ -782,7 +872,7 @@
                 // Confirm translation
                 if (confirm(`Translate "${tag.name}" to "${translatedTag}"?`)) {
                     const oldTagName = tag.name;
-                    await renameTag(tag, translatedTag, tagTile);
+                    await renameTag(tag, translatedTag);
                     alert(`Tag "${oldTagName}" has been renamed to "${translatedTag}".`);
                 }
             });
@@ -794,31 +884,33 @@
             buttonContainer.appendChild(deleteButton);
     
             const tagText = document.createElement('div');
+            tagTile.appendChild(tagText);
+
             const tagLink = document.createElement('a');
             tagLink.href = `https://www.pixiv.net/en/users/${uid}/bookmarks/artworks/${tag.name}?rest=${publicationType}`;
             tagLink.innerText = `${tag.name}`;
+            tagLink.classList.add("tag-link");
             tagLink.style.textDecoration = 'none';
             tagLink.style.display = 'block';
             tagText.appendChild(tagLink);
+            tagTile.tagLink = tagLink;
     
             const tagCount = document.createElement('div');
-            tagCount.innerText = `(${count})`;
+            tagCount.classList.add("tag-count");
             tagText.appendChild(tagCount);
+            tagTile.tagCount = tagCount;
     
             // Create a container for illustrations (initially hidden)
-            const illustContainer = document.createElement('ol');
+            let illustContainer = document.createElement('ol');
             illustContainer.classList.add("illust-container");
             illustContainer.style.display = 'none';
             illustContainer.style.paddingTop = '5px';
             illustContainer.style.textAlign = 'left';
-    
-            // Populate illustrations
-            Object.values(tag.illustrations).forEach((illust) => {
-                const illustItem = document.createElement('li');
-                illustItem.style.marginBottom = '5px';
-                illustItem.innerHTML = `<a href="${illust.url}" target="_blank">${illust.alt || illust.title}</a>`;
-                illustContainer.appendChild(illustItem);
-            });
+
+            tagTile.appendChild(illustContainer);
+            tagTile.illustContainer = illustContainer;
+
+            populateTagTile(tag);
     
             // Toggle illustration visibility when tile is clicked
             tagTile.addEventListener('click', () => {
@@ -844,9 +936,6 @@
             });
 
     
-            tagTile.appendChild(tagText);
-            tagTile.appendChild(buttonContainer);  // Append button to each tile
-            tagTile.appendChild(illustContainer);  // Append hidden illustration container to each tile
             tagContainer.appendChild(tagTile);
             totalCount += count;
         });
