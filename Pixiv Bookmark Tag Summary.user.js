@@ -175,7 +175,7 @@
         bookmarkIds = filterBookmarks(tagNames[0], bookmarkIds, true);
         bookmarkIds = filterBookmarks2(tagNames[0], bookmarkIds, true);
         if (!bookmarkIds || bookmarkIds.length == 0){
-            console.log(`Skip adding tag ${tagNames} because it has no illustrations`);
+            console.log(`Skip adding tag ${tagNames} because the illustrations already have it`);
             return;
         }
         tagNames = tagNames.map(str => str.replace(/ /g, "_").slice(0, 20).trim().replace(/[_-]+$/, ''));
