@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.6.0
+// @version      0.6.1
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -656,12 +656,12 @@
         tag = getTag(tag);
         const targetTag = tags[targetTagName];
         const bookmarkIds = Object.values(targetTag.illustrations).map(illust => illust.bookmarkId);
-        await add([tag.name], bookmarkIds);
+        await add([targetTagName], bookmarkIds);
         populateTagTile(tag);
         console.log(`Tag "${tag.name}" added to all illustrations in "${targetTagName}".`);
 
-        if (forceRemove || confirm(`Do you want to remove the "${targetTagName}" tag?`)) {
-            await removeTags([targetTagName]);
+        if (forceRemove || confirm(`Do you want to remove the "${tag.name}" tag?`)) {
+            await removeTags([tag.name]);
             console.log(`Tag "${targetTagName}" removed.`);
         }
         sortTags();
