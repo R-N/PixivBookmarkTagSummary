@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.6.1
+// @version      0.6.2
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -321,7 +321,7 @@
         }
             
         newTagName = fixTagName(newTagName);
-        if (includes(tags)(newTagName)){
+        if (includes(tagTiles)(newTagName)){
             if (confirm(`Tag ${newTagName} already exists. Do you want to move ${tag.name} into ${newTagName}?`)){
                 moveTag(tag.name, newTagName, true);
             }
