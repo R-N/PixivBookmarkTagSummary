@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.5.2
+// @version      0.5.3
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -22,6 +22,7 @@
     let sortedTags = [];
     let illustrations = {};
     let bookmarks = {};
+    let translations = {};
     let debounceTimer = null;
     let fetchedAll = false;
 
@@ -31,6 +32,7 @@
         sortedTags: sortedTags,
         illustrations: illustrations,
         bookmarks: bookmarks,
+        translations: translations,
         uid: uid,
         lang: lang,
         token: token,
@@ -212,35 +214,46 @@
         const apiBaseUrl = "https://www.pixiv.net/ajax/search/tags/";
         const apiUrl = `${apiBaseUrl}${encodeURIComponent(tag)}?lang=${lang}`;
         let translation = null;
-            
+
+        if (includes(globalObjects.translations)(tag)){
+            translation = globalObjects.translations[tag];
+            if (translation){
+                console.log(`Cached translation: ${tag} -> ${translation}`);
+                return translation;
+            }
+        }
+
         try {
             // Fetch the tag translation from the API
-            const response = await fetch(apiUrl, { credentials: 'same-origin' });
-            if (!response.ok) {
-                console.error(`Failed to fetch translation for tag: ${tag}`);
-                return null;
+            if (!translation){
+                const response = await fetch(apiUrl, { credentials: 'same-origin' });
+                if (!response.ok) {
+                    console.error(`Failed to fetch translation for tag: ${tag}`);
+                    return null;
+                }
+    
+                // Parse the JSON response
+                const json = await response.json();
+                if (json.error) {
+                    console.error(`API error for tag: ${tag}`, json.message || "Unknown error");
+                    return null;
+                }
+    
+                // Extract translation based on the order of preference
+                translation =
+                    json.body?.tagTranslation?.[tag]?.[lang] ||
+                    json.body?.breadcrumbs?.successor?.pop()?.translation?.[lang] ||
+                    json.body?.tagTranslation?.[tag]?.en ||
+                    json.body?.breadcrumbs?.successor?.pop()?.translation?.en ||
+                    json.body?.tagTranslation?.[tag]?.romaji ||
+                    json.body?.pixpedia?.tag ||
+                    null; // No translation available
             }
-
-            // Parse the JSON response
-            const json = await response.json();
-            if (json.error) {
-                console.error(`API error for tag: ${tag}`, json.message || "Unknown error");
-                return null;
-            }
-
-            // Extract translation based on the order of preference
-            translation =
-                json.body?.tagTranslation?.[tag]?.[lang] ||
-                json.body?.breadcrumbs?.successor?.pop()?.translation?.[lang] ||
-                json.body?.tagTranslation?.[tag]?.en ||
-                json.body?.breadcrumbs?.successor?.pop()?.translation?.en ||
-                json.body?.tagTranslation?.[tag]?.romaji ||
-                json.body?.pixpedia?.tag ||
-                null; // No translation available
 
             if (translation) {
                 translation = translation.replace(/ /g, "_");
                 console.log(`Translated: ${tag} -> ${translation}`);
+                translations[tag] = translation;
                 return translation;
             } else {
                 console.warn(`No translation found for tag: ${tag}`);
@@ -848,8 +861,48 @@
         });
         const fetchButton = document.createElement('button');
         fetchButton.innerHTML = `Fetch All`;
+        fetchButton.style.marginRight = '5px';
         fetchButton.addEventListener('click', () => {
             setTimeout(summarizeAllBookmarks, 100);
+        });
+
+        const loadTranslationsButton = document.createElement('button');
+        loadTranslationsButton.innerHTML = `Load Translations`;
+        loadTranslationsButton.style.marginRight = '5px';
+
+        loadTranslationsButton.addEventListener('click', async () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/json';
+            input.addEventListener('change', async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    const fileContent = await file.text();
+                    const loadedTranslations = JSON.parse(fileContent);
+
+                    if (typeof loadedTranslations !== 'object') {
+                        alert('Invalid JSON file. Expected an object.');
+                        return;
+                    }
+
+                    // Update the translations dictionary
+                    Object.assign(globalObjects.translations, loadedTranslations);
+
+                    console.log('Loaded translations:', loadedTranslations);
+                    alert(`Loaded ${Object.keys(loadedTranslations).length} translations.`);
+                } catch (error) {
+                    console.error('Error loading translations:', error);
+                    alert('Failed to load translations. Please ensure the file is valid JSON.');
+                } finally {
+                    document.body.removeChild(input);
+                    //input.remove(); 
+                }
+            });
+
+            document.body.appendChild(input);
+            input.click(); 
         });
 
         const bulkActionDiv = document.createElement('div');
@@ -901,8 +954,12 @@
                 console.log(synonyms);
                 console.log(JSON.stringify(synonyms));
 
-                downloadObject(translations, "translations.json");
-                downloadObject(synonyms, "synonyms.json");
+                if (confirm(`Save translations?`)) {
+                    downloadObject(translations, "translations.json");
+                }
+                if (confirm(`Save translations as synonyms?`)) {
+                    downloadObject(synonyms, "synonyms.json");
+                }
 
                 // Show an alert asking if the user wants to download the file
                 const toTranslateCount = Object.keys(translations).length;
@@ -939,6 +996,7 @@
         summaryContent.appendChild(totalContainer);
         summaryContent.appendChild(logButton);
         summaryContent.appendChild(fetchButton);
+        summaryContent.appendChild(loadTranslationsButton);
         // Add the bulk action div to the summary UI
         summaryContent.appendChild(bulkActionDiv);
         summaryDiv.appendChild(title);
