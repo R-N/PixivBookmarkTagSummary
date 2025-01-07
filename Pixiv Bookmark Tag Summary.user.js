@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pixiv Bookmark Tag Summary
 // @namespace    http://tampermonkey.net/
-// @version      0.6.2
+// @version      0.6.3
 // @description  Count illustrations per tag in bookmarks
 // @match        https://www.pixiv.net/*/bookmarks*
 // @grant        unsafeWindow
@@ -655,14 +655,14 @@
         // Add the dragged tag (A) to all illustrations in the target tag (B)
         tag = getTag(tag);
         const targetTag = tags[targetTagName];
-        const bookmarkIds = Object.values(targetTag.illustrations).map(illust => illust.bookmarkId);
+        const bookmarkIds = Object.values(tag.illustrations).map(illust => illust.bookmarkId);
         await add([targetTagName], bookmarkIds);
-        populateTagTile(tag);
-        console.log(`Tag "${tag.name}" added to all illustrations in "${targetTagName}".`);
+        populateTagTile(targetTag);
+        console.log(`Tag "${targetTagName}" added to all illustrations in "${tag.name}".`);
 
         if (forceRemove || confirm(`Do you want to remove the "${tag.name}" tag?`)) {
             await removeTags([tag.name]);
-            console.log(`Tag "${targetTagName}" removed.`);
+            if (!forceRemove) alert(`Tag "${tag.name}" removed.`);
         }
         sortTags();
     }
@@ -765,22 +765,24 @@
             tagTiles[tag.name] = tagTile;
             tagTile.tag = tag;
 
-            // Drag event listeners
+            // Dragstart is triggered on the dragged element
             tagTile.addEventListener('dragstart', (e) => {
                 e.dataTransfer.setData('text/plain', tag.name);
             });
 
             tagTile.addEventListener('dragover', (e) => {
-                e.preventDefault(); // Allow drop
+                e.preventDefault(); 
             });
 
+            // drop and dragover are triggered on the below element
             tagTile.addEventListener('drop', async (e) => {
                 e.preventDefault();
-                const targetTagName = e.dataTransfer.getData('text/plain');
-                const draggedTagName = tagTile.dataset.tagName;
+                const targetTagName = tag.name;
+                const draggedTagName = e.dataTransfer.getData('text/plain');
+                console.log(draggedTagName, targetTagName);
                 if (draggedTagName === targetTagName) return;
                 // Confirm addition of the dragged tag to target tag's illustrations
-                if (!confirm(`Do you want to add the "${draggedTagName}" tag to all illustrations in "${targetTagName}"?`)) {
+                if (!confirm(`Do you want to move "${draggedTagName}" tag to "${targetTagName}" tag?\nThis will add "${targetTagName}" tag to all illustrations in "${draggedTagName}"`)) {
                     return;
                 }
                 
